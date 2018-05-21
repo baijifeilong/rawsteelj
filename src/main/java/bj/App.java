@@ -42,6 +42,8 @@ public class App extends JFrame {
     private PlaylistModel playlistModel;
     private MediaInfo currentMedia;
     private int currentProgress = 0;
+    private List<Integer> playHistory = new ArrayList<>();
+    private int playHistoryCursor = -1;
 
     public App() {
         setTitle("app");
@@ -82,7 +84,7 @@ public class App extends JFrame {
                                         if (mouseEvent.getClickCount() == 2) {
                                             int row = playlistTable.rowAtPoint(mouseEvent.getPoint());
                                             MediaInfo mediaInfo = playlistModel.getRow(row);
-                                            play(mediaInfo);
+                                            playSelected(row);
                                         }
                                     }
                                 });
@@ -115,6 +117,11 @@ public class App extends JFrame {
                                 e.printStackTrace();
                             }
                         }
+                    });
+                }});
+                add(new JButton("Prev") {{
+                    addActionListener(actionEvent -> {
+                        playPrev();
                     });
                 }});
                 add(new JButton("Next") {{
@@ -237,7 +244,6 @@ public class App extends JFrame {
             while (scanner.hasNextLine()) {
                 String line = scanner.nextLine();
                 String[] parts = line.split("\\|");
-                System.out.println("parts: " + Arrays.toString(parts));
                 MediaInfo mediaInfo = new MediaInfo();
                 mediaInfo.setAuthor(parts[0]);
                 mediaInfo.setTitle(parts[1]);
@@ -263,9 +269,6 @@ public class App extends JFrame {
     }
 
     private void play(MediaInfo mediaInfo) {
-        currentMedia = mediaInfo;
-        currentProgress = 0;
-        updateProgress();
         player.play(mediaInfo.getFilename());
 
         String musicFilename = mediaInfo.getFilename();
@@ -279,13 +282,47 @@ public class App extends JFrame {
         }
     }
 
-    private void playNext() {
+    private void play(int indexToPlay) {
+        currentMedia = getPlayList().get(indexToPlay);
+        currentProgress = 0;
+        updateProgress();
+
         Vector<MediaInfo> playlist = getPlayList();
-        int indexToPlay = new Random().nextInt(playlist.size());
         playlistTable.setRowSelectionInterval(indexToPlay, indexToPlay);
         JScrollBar scrollBar = ((JScrollPane) playlistTable.getParent().getParent()).getVerticalScrollBar();
         scrollBar.setValue(scrollBar.getMaximum() * indexToPlay / playlist.size());
         play(playlist.get(indexToPlay));
+    }
+
+    private void playNext() {
+        int size = playHistory.size();
+        if (playHistoryCursor >= 0 && playHistoryCursor < size - 1) {
+            playHistoryCursor += 1;
+            play(playHistory.get(playHistoryCursor));
+        } else {
+            Vector<MediaInfo> playlist = getPlayList();
+            int indexToPlay = playlist.indexOf(currentMedia);
+            while (indexToPlay == playlist.indexOf(currentMedia)) {
+                indexToPlay = new Random().nextInt(playlist.size());
+            }
+            play(indexToPlay);
+            playHistory.add(indexToPlay);
+            playHistoryCursor = playHistory.size() - 1;
+        }
+    }
+
+    private void playSelected(int index) {
+        play(index);
+        playHistory.add(index);
+        playHistoryCursor = playHistory.size() - 1;
+    }
+
+    private void playPrev() {
+        int size = playHistory.size();
+        if (playHistoryCursor > 0 && playHistoryCursor < size) {
+            playHistoryCursor -= 1;
+            play(playHistory.get(playHistoryCursor));
+        }
     }
 
     private Vector<MediaInfo> getPlayList() {
