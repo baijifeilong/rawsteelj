@@ -13,16 +13,18 @@ import javax.swing.event.ChangeListener;
 import javax.swing.plaf.FontUIResource;
 import javax.swing.table.AbstractTableModel;
 import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.UnsupportedFlavorException;
+import java.awt.dnd.DnDConstants;
+import java.awt.dnd.DropTarget;
+import java.awt.dnd.DropTargetDropEvent;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.Scanner;
-import java.util.Vector;
+import java.io.*;
+import java.util.*;
+import java.util.List;
 import java.util.logging.Logger;
 
 @SpringBootApplication
@@ -46,7 +48,7 @@ public class App extends JFrame {
         initStyle();
         initLayout();
         initPlayer();
-        initPlaylist();
+        loadPlaylist();
     }
 
     private void initStyle() {
@@ -69,6 +71,8 @@ public class App extends JFrame {
                                 playlistModel = this;
                             }}) {{
                                 playlistTable = this;
+                                setRowHeight(25);
+                                setFont(new FontUIResource("Noto", Font.PLAIN, 16));
                                 setTableHeader(null);
                                 setShowGrid(false);
                                 getColumnModel().getColumn(0).setMaxWidth(80);
@@ -88,6 +92,7 @@ public class App extends JFrame {
                 add(new JScrollPane() {{
                     setViewportView(new JLabel("[LYRIC]") {{
                         lyricList = this;
+                        setFont(new FontUIResource("Noto", Font.PLAIN, 20));
                         setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
                         setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
                     }});
@@ -110,6 +115,11 @@ public class App extends JFrame {
                                 e.printStackTrace();
                             }
                         }
+                    });
+                }});
+                add(new JButton("Next") {{
+                    addActionListener(actionEvent -> {
+                        playNext();
                     });
                 }});
                 add(new JSlider() {{
@@ -146,6 +156,26 @@ public class App extends JFrame {
                     progressLabel = this;
                 }});
             }});
+            setDropTarget(new DropTarget() {
+                @SuppressWarnings("unchecked")
+                @Override
+                public synchronized void drop(DropTargetDropEvent event) {
+                    event.acceptDrop(DnDConstants.ACTION_COPY);
+                    try {
+                        List<File> droppedFiles = (List<File>) event.getTransferable().getTransferData(DataFlavor.javaFileListFlavor);
+                        System.out.println("files: " + droppedFiles);
+                        for (File file : droppedFiles) {
+                            String filename = file.getName();
+                            if (filename.endsWith(".mp3") || filename.endsWith(".wma")) {
+                                addFileToPlaylist(file);
+                            }
+                            savePlaylist();
+                        }
+                    } catch (UnsupportedFlavorException | IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            });
         }};
         updateProgress();
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
@@ -168,20 +198,56 @@ public class App extends JFrame {
     }
 
     private void initPlaylist() {
-        File[] files = new File("/mnt/d/music/test").listFiles();
-        assert files != null;
-        for (File file : files) {
-            String filename = file.getAbsolutePath();
-            if (filename.endsWith(".wma") || filename.endsWith(".mp3")) {
-                MediaInfo mediaInfo = player.getMediaInfo(filename);
-                logger.info(String.format("Parsed: [%s|%s](%s)", mediaInfo.getAuthor(), mediaInfo.getTitle(), mediaInfo.getFilename()));
+    }
 
-                PlaylistModel model = (PlaylistModel) playlistTable.getModel();
+    private void addFileToPlaylist(File file) {
+        String filename = file.getAbsolutePath();
+        MediaInfo mediaInfo = player.getMediaInfo(filename);
+        logger.info(String.format("Parsed: [%s|%s](%s)", mediaInfo.getAuthor(), mediaInfo.getTitle(), mediaInfo.getFilename()));
+
+        PlaylistModel model = (PlaylistModel) playlistTable.getModel();
+        model.addRow(mediaInfo);
+        playlistTable.revalidate();
+        JScrollBar scrollBar = ((JScrollPane) playlistTable.getParent().getParent()).getVerticalScrollBar();
+        scrollBar.setValue(scrollBar.getMaximum());
+    }
+
+    private void savePlaylist() {
+        PlaylistModel model = (PlaylistModel) playlistTable.getModel();
+        Vector<MediaInfo> tableData = model.getTableData();
+        File file = new File("rawsteelj.playlist");
+        try {
+            PrintWriter writer = new PrintWriter(file);
+            for (MediaInfo item : tableData) {
+                String str = String.format("%s|%s|%d|%s\n", item.getAuthor(), item.getTitle(), (int) item.getLength(), item.getFilename());
+                System.out.println(str);
+                writer.write(str);
+            }
+            writer.close();
+        } catch (FileNotFoundException e) {
+            logger.severe(e.getMessage());
+        }
+    }
+
+    private void loadPlaylist() {
+        PlaylistModel model = (PlaylistModel) playlistTable.getModel();
+        File file = new File("rawsteelj.playlist");
+        try {
+            Scanner scanner = new Scanner(file);
+            while (scanner.hasNextLine()) {
+                String line = scanner.nextLine();
+                String[] parts = line.split("\\|");
+                System.out.println("parts: " + Arrays.toString(parts));
+                MediaInfo mediaInfo = new MediaInfo();
+                mediaInfo.setAuthor(parts[0]);
+                mediaInfo.setTitle(parts[1]);
+                mediaInfo.setLength(Float.parseFloat(parts[2]));
+                mediaInfo.setFilename(parts[3]);
                 model.addRow(mediaInfo);
                 playlistTable.revalidate();
-                JScrollBar scrollBar = ((JScrollPane) playlistTable.getParent().getParent()).getVerticalScrollBar();
-                scrollBar.setValue(scrollBar.getMaximum());
             }
+        } catch (FileNotFoundException e) {
+            logger.severe(e.getMessage());
         }
     }
 
@@ -203,7 +269,7 @@ public class App extends JFrame {
         player.play(mediaInfo.getFilename());
 
         String musicFilename = mediaInfo.getFilename();
-        String lyricFilename = musicFilename.replaceAll("\\..+", ".lrc");
+        String lyricFilename = musicFilename.replaceFirst("\\.[^.]+$", ".lrc");
         File lyricFile = new File(lyricFilename);
         try {
             String lyric = new Scanner(new FileInputStream(lyricFile), "GBK").useDelimiter("\\Z").next();
@@ -211,6 +277,20 @@ public class App extends JFrame {
         } catch (FileNotFoundException e) {
             lyricList.setText("Lyric not exist");
         }
+    }
+
+    private void playNext() {
+        Vector<MediaInfo> playlist = getPlayList();
+        int indexToPlay = new Random().nextInt(playlist.size());
+        playlistTable.setRowSelectionInterval(indexToPlay, indexToPlay);
+        JScrollBar scrollBar = ((JScrollPane) playlistTable.getParent().getParent()).getVerticalScrollBar();
+        scrollBar.setValue(scrollBar.getMaximum() * indexToPlay / playlist.size());
+        play(playlist.get(indexToPlay));
+    }
+
+    private Vector<MediaInfo> getPlayList() {
+        PlaylistModel model = (PlaylistModel) playlistTable.getModel();
+        return model.getTableData();
     }
 
     private void skip(int seconds) {
@@ -243,6 +323,10 @@ public class App extends JFrame {
 
         public MediaInfo getRow(int i) {
             return tableData.get(i);
+        }
+
+        public Vector<MediaInfo> getTableData() {
+            return tableData;
         }
 
         @Override
